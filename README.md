@@ -1,6 +1,8 @@
 # East Asia Relations Monitor
 
-用 GDELT 事件資料，每月預測東亞 11 組雙邊關係（中日、中台、兩韓等）下個月會偏向合作、低度衝突還是高度衝突。
+用 GDELT 事件資料，每月預測東亞 11 組雙邊關係（中日、中台、兩韓等）下個月會偏向合作、低度衝突還是高度衝突(已使用Github Action進行排程)。
+
+最近更新日期:
 
 [**成果網站 →**](https://east-asia-relations-monitor-s4kkyibvoyugw6ik2j6feh.streamlit.app/)
 
