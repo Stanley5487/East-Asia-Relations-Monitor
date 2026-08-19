@@ -26,9 +26,23 @@ jobs:
         with:
           credentials_json: '${{ secrets.GCP_SA_KEY }}'
 
+      - name: Debug - check working directory and files
+        run: |
+          echo "=== 目前工作目錄 ==="
+          pwd
+          echo "=== 根目錄內容 ==="
+          ls -la
+          echo "=== data 資料夾內容 ==="
+          ls -la data/ || echo "data/ 不存在"
+          echo "=== data/processed 資料夾內容 ==="
+          ls -la data/processed/ || echo "data/processed/ 不存在"
+          echo "=== src 資料夾內容 ==="
+          ls -la src/
+          echo "=== src/core 資料夾內容 ==="
+          ls -la src/core/ || echo "src/core/ 不存在"
+
       - name: Run prediction pipeline
         run: python src/predict_pipeline.py
-        working-directory: .
 
       - name: Commit and push updated outputs
         run: |
