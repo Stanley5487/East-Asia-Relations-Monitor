@@ -25,10 +25,20 @@ def main():
     print('正在連線 BigQuery')
     client = bigquery.Client(project=PROJECT_ID)
     print('正在查詢資料')
-    df = fetch_dyad_events(client, "CHN", "TWN", 20230101, 20251231)
-    df.to_csv('data/raw/CHN_TWN2023_2025.csv')
-    print(f"抓到 {len(df)} 筆資料")
-    print(df.head())
+    dyad_list = [
+        ('CHN', 'TWN'), ('CHN', 'JPN'), ('CHN', 'KOR'), ('CHN', 'PRK'),
+        ('JPN', 'KOR'), ('JPN', 'PRK'), ('JPN', 'TWN'),
+        ('KOR', 'PRK'), ('KOR', 'TWN'),
+        ('PRK', 'TWN'),
+        ('CHN', 'PHL'), ('CHN', 'VNM'),
+    ]
+
+    for actor1, actor2 in dyad_list:
+        print(f'正在搜尋{actor1}、{actor2}')
+        df = fetch_dyad_events(client, actor1, actor2, 20150101, 20251231)
+        df.to_csv(f'data/raw/{actor1}_{actor2}2015_2025.csv')
+        print(f"抓到 {len(df)} 筆資料")
+
 
 if __name__ == "__main__":
     main()

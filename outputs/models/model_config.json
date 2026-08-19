@@ -1,0 +1,21 @@
+{
+  "features": [
+    "regime_diff",
+    "event_count_lag1",
+    "goldstein_std_lag1",
+    "goldstein_min_lag1",
+    "num_mentions_sum_lag1",
+    "num_articles_sum_lag1",
+    "num_sources_sum_lag1",
+    "high_conflict_count_lag1",
+    "low_conflict_count_lag1",
+    "quad4_count_lag1",
+    "high_conflict_pct_lag1",
+    "low_conflict_pct_lag1",
+    "quad4_pct_lag1"
+  ],
+  "thresholds": {
+    "High_Conflict": 0.225,
+    "Low_Conflict": 0.275
+  }
+}

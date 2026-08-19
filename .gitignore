@@ -1,9 +1,15 @@
 .venv/
+.venv_new/
+data/*
+!data/raw/
+!data/processed/
 data/raw/*
 !data/raw/.gitkeep
+data/processed/*
+!data/processed/.gitkeep
 __pycache__/
 *.pyc
 .ipynb_checkpoints/
 credentials/
-*.json
-.env/
+credentials/*.json
+.env
