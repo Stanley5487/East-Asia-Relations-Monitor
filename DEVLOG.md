@@ -113,3 +113,47 @@
 | CHN-KOR | 78.7% | 13.3% | 8.1% | Cooperation |
 | KOR-PRK | 61.7% | 24.7% | 13.5% | Cooperation |
 | KOR-TWN | 79.0% | 13.1% | 7.8% | Cooperation |
+
+
+###　2026-08-20 BigQuery查詢優化
+
+發現這幾天測試 GitHub Actions 期間，BigQuery 帳單累積到近萬元台幣（雖然都在抵免額範圍內），排查後找到根本原因：
+
+**問題一：沒有使用分區表**
+原本查詢的是 `gdelt-bq.gdeltv2.events`（非分區版本），該表沒有分區設定，
+`WHERE SQLDATE >= ... AND SQLDATE <= ...` 這種篩選完全無法讓 BigQuery 跳過不相關資料，
+等同全表掃描。實測不管查一天還是查十年，預估掃描量都是同一個數字（366.6 GB），
+證實了掃描量根本沒有隨時間範圍縮小而減少。
+
+改用 GDELT 官方提供的分區版本表 `gdelt-bq.gdeltv2.events_partitioned`，
+搭配 `_PARTITIONTIME` 篩選語法後，同樣查詢（半年、單一dyad）掃描量降到 11.9 GB，
+減少約 31 倍。
+
+**問題二：SELECT \* 讀取了用不到的欄位**
+原始表有 62 個欄位，但 `build_feature()` 實際只用到 8 個。
+把 `SELECT *` 改成明確列出必要欄位後，掃描量從 11.9 GB 再降到 1.65 GB。
+
+**問題三：用迴圈對 12 組 dyad 各自查詢一次**
+原本 `for actor1, actor2 in DYAD_LIST` 逐一查詢，12 次相當於 12 倍掃描成本。
+改用 `Actor1CountryCode IN (...) AND Actor2CountryCode IN (...)`，
+一次查詢涵蓋所有國家兩兩配對，實測掃描量依然是 1.65 GB——
+與查單一組完全相同，證實掃描成本主要來自「讀取這段時間的分區資料」，
+篩選條件的複雜度幾乎不影響掃描量。
+
+**三項優化疊加效果**
+
+| 版本 | 單次查詢掃描量 |
+|---|---|
+| 原始（非分區 + SELECT * + 12次迴圈） | 366.6 GB × 12 ≈ 4,399 GB |
+| + 改用分區表 | 11.9 GB × 12 ≈ 143 GB |
+| + 只選必要欄位 | 1.65 GB × 12 ≈ 19.8 GB |
+| + 一次查詢取代迴圈 | **1.65 GB** |
+
+總計掃描量從約 4,399 GB 降到 1.65 GB，減少約 **2,666 倍**。
+換算費用，一次完整 pipeline 執行從原本約 670 元台幣，降到約 0.25 元台幣。
+
+最後在 `fetch_all_dyads_events()` 加上 `maximum_bytes_billed=5GB` 的流量限制，
+無論未來程式碼是否有其他潛在問題，單次查詢都會被強制限制在 5GB 以內，
+超過直接報錯，避免重演這次的意外高額掃描。
+
+**參考資料**：https://blog.gdeltproject.org/announcing-partitioned-gdelt-bigquery-tables/

@@ -2,11 +2,13 @@
 predict_pipeline.py
 ====================
 用途：對固定的11組已訓練過的東亞dyad，抓取最新GDELT資料，
-套用訓練好的模型，產出下一期的關係類別機率預測與分類標籤。
+套用訓練好的模型，產出下一期的關係類別機率預測與分類標籤(end-to-end 腳本)。
 
 注意：本檔案的所有檔案路徑，皆以 PROJECT_ROOT（本檔案所在位置往上一層）
-為基準組成絕對路徑，不依賴執行當下的工作目錄，
-避免在不同環境（本機 / GitHub Actions）下因工作目錄不同而找不到檔案。
+為基準組成絕對路徑，不依賴執行當下的工作目錄，避免在不同環境（本機 / GitHub Actions）下因工作目錄不同而找不到檔案。
+
+效能備註（2026-08-20）：改用一次查詢涵蓋所有國家配對（見 core/data_fetcher.py），
+取代原本迴圈查詢的方式，BigQuery 掃描量從約 19.8 GB 降至 1.65 GB。
 """
 
 import json
@@ -17,16 +19,21 @@ from google.cloud import bigquery
 from datetime import datetime, timedelta
 
 from core.features import build_feature
-from core.data_fetcher import fetch_dyad_events
+from core.data_fetcher import fetch_all_dyads_events
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 PROJECT_ID = "gdelt-east-asia-forecast"
+
+# 不包含PRK-TWN
 DYAD_LIST = [
     ('CHN', 'TWN'), ('CHN', 'JPN'), ('CHN', 'KOR'), ('CHN', 'PRK'),
     ('JPN', 'KOR'), ('JPN', 'PRK'), ('JPN', 'TWN'),
     ('KOR', 'PRK'), ('KOR', 'TWN'),
     ('CHN', 'PHL'), ('CHN', 'VNM'),
 ]
+
+# 查詢時實際涉及的國家
+COUNTRIES = sorted({country for pair in DYAD_LIST for country in pair})
 
 
 def get_last_complete_month_end(reference_date=None):
@@ -92,25 +99,43 @@ def assign_label(row, thresholds):
     return 'Cooperation'
 
 
+def filter_to_valid_dyads(raw_df, dyad_list):
+    """
+    一次性查詢會抓回「所有國家兩兩配對」的組合，
+    這裡依照 dyad_list 篩選出真正需要的配對，
+    並統一標記為固定方向的 dyad 名稱（例如 CHN-TWN，而非 TWN-CHN）。
+    """
+    filtered_frames = []
+    for actor1, actor2 in dyad_list:
+        mask = (
+            ((raw_df['Actor1CountryCode'] == actor1) & (raw_df['Actor2CountryCode'] == actor2))
+            | ((raw_df['Actor1CountryCode'] == actor2) & (raw_df['Actor2CountryCode'] == actor1))
+        )
+        subset = raw_df[mask].copy()
+        subset['dyad'] = f'{actor1}-{actor2}'
+        filtered_frames.append(subset)
+
+    return pd.concat(filtered_frames, ignore_index=True)
+
+
 def run_prediction_pipeline(start_date, end_date):
+    """
+    完整預測流程：抓資料 -> 特徵工程 -> 合併政體差異 -> 套用模型 -> 產出結果
+    """
     print('正在連線 BigQuery')
     client = bigquery.Client(project=PROJECT_ID)
 
-    all_dyad_data = []
-    for actor1, actor2 in DYAD_LIST:
-        print(f'正在抓取 {actor1}-{actor2}')
-        df = fetch_dyad_events(client, actor1, actor2, start_date, end_date)
-        df['dyad'] = f'{actor1}-{actor2}'
-        all_dyad_data.append(df)
+    print(f'一次查詢涵蓋國家：{COUNTRIES}')
+    raw_df = fetch_all_dyads_events(client, COUNTRIES, start_date, end_date)
+    print(f'共抓取 {len(raw_df)} 筆事件資料（含所有國家配對，尚未篩選）')
 
-    raw_df = pd.concat(all_dyad_data, ignore_index=True)
-    print(f'共抓取 {len(raw_df)} 筆事件資料')
+    raw_df = filter_to_valid_dyads(raw_df, DYAD_LIST)
+    print(f'篩選出目標 dyad 後，剩餘 {len(raw_df)} 筆事件資料')
 
     features = build_feature(raw_df)
 
     features['year'] = features['MonthYear'] // 100
     vdem_path = PROJECT_ROOT / 'data' / 'processed' / 'vdem_dyad.csv'
-    print(f'讀取 V-Dem 資料：{vdem_path}（存在：{vdem_path.exists()}）')
     vdem_dyad = pd.read_csv(vdem_path)
     features = merge_regime_diff(features, vdem_dyad)
 
