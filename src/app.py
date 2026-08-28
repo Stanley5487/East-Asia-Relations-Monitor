@@ -15,6 +15,7 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+import sqlite3
 
 # ---------------------------------------------------------------------------
 # 頁面設定與樣式
@@ -180,12 +181,16 @@ st.markdown(
 # ---------------------------------------------------------------------------
 @st.cache_data
 def load_predictions():
-    return pd.read_csv("outputs/latest_predictions.csv")
-
+    conn = sqlite3.connect('outputs/relations.db')
+    df = pd.read_sql("SELECT * FROM predictions", conn)
+    conn.close()
+    return df
 
 @st.cache_data
 def load_historical_features():
-    df = pd.read_csv("outputs/historical_features.csv")
+    conn = sqlite3.connect('outputs/relations.db')
+    df = pd.read_sql("SELECT * FROM historical_features", conn)
+    conn.close()
     df["date"] = pd.to_datetime(df["MonthYear"].astype(str), format="%Y%m")
     return df
 

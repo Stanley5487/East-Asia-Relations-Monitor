@@ -157,3 +157,15 @@
 超過直接報錯，避免重演這次的意外高額掃描。
 
 **參考資料**：https://blog.gdeltproject.org/announcing-partitioned-gdelt-bigquery-tables/
+
+## 20260828 -決定新增近日時事問答聊天機器人
+現有的East Asia Relations Monitor只能呈現「預測機率」，缺乏對「為什麼」的解釋能力。使用者看到某組關係被標記為High_Conflict，無法得知具體是什麼事件導致的判斷。
+### 規劃方向
+- 設計為Agent架構：讓LLM自主判斷該查詢結構化預測資料(SQL)，還是檢索非結構化新聞文本(RAG)
+- 多語言策略：依關係相關性差異化蒐集中/英/日/韓新聞來源，避免對所有dyad一視同仁抓四種語言造成資源浪費
+- 未來考慮嘗試新增理論知識的文獻
+
+### 基礎建設調整：CSV → SQLite
+因為接下來要新增的新聞文章資料表(需要去重、時效性過濾等關聯式查詢邏輯)，原本用CSV管理predictions/historical_features的方式已不敷使用，改採SQLite：
+- 新增 `scripts/csv_to_sqlite.py`，一次性把現有CSV轉入 `outputs/relations.db`
+- `app.py` 讀取來源由CSV改為SQLite查詢
