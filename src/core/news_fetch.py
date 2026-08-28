@@ -106,7 +106,8 @@ def fetch_news_rss(keyword, lang="zh-TW", country="TW", days=7):
     抓取Google News RSS訊息，將轉址連結解析回真實網址，並抓取每篇文章的全文。
     回傳的每筆資料包含：title, publisher, content, link, published
     """
-    url = f"https://news.google.com/rss/search?q={keyword}+when:{days}d&hl={lang}&gl={country}&ceid={country}:{lang}"
+    encoded_keyword = quote(keyword)
+    url = f"https://news.google.com/rss/search?q={encoded_keyword}+when:{days}d&hl={lang}&gl={country}&ceid={country}:{lang}"
     feed = feedparser.parse(url)
     entries = feed.entries
 
