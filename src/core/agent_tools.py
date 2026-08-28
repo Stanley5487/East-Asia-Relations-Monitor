@@ -55,7 +55,9 @@ def query_news(question: str, dyad: str) -> str:
     for doc in results:
         published = doc.metadata.get("published", "日期不詳")
         title = doc.metadata.get("title", "")
-        part = f"【發布日期：{published}】【標題：{title}】\n{doc.page_content}"
+        source = doc.metadata.get("source", "來源不詳")
+        content = doc.page_content[:800]
+        part = f"【發布日期：{published}】【標題：{title}】【來源網址：{source}】\n{doc.page_content}"
         context_parts.append(part)
 
     context = "\n\n---\n\n".join(context_parts)
