@@ -14,16 +14,12 @@ _HEADERS = {
     )
 }
 
-# 重用 TCP/TLS 連線，同網域的多次請求不用每次重新握手
 _session = requests.Session()
 _session.headers.update(_HEADERS)
 
-# Google News 的 RSS 連結是「轉址頁」，同一顆 base64 id 短時間內解碼結果不會變，
-# 用 cache 避免同一次抓取重複打 batchexecute
 _decode_cache = {}
-
-# 解碼是網路 I/O bound，平行打請求換取速度；數字抓保守一點避免被 Google 暫時限流
 _DECODE_WORKERS = 8
+_FETCH_WORKERS = 8  # 抓全文也是I/O bound，一樣用平行處理
 
 
 def _extract_base64_id(google_news_url):
@@ -35,15 +31,7 @@ def _extract_base64_id(google_news_url):
 
 
 def decode_google_news_url(google_news_url, timeout=10):
-    """
-    將 Google News RSS 的轉址連結，換成新聞原文的真實網址。
-
-    做法：Google 從2024年起把 base64 id 加上簽章，不能直接解碼，
-    必須先 GET 轉址頁拿到頁面裡的 data-n-a-sg（簽章）、data-n-a-ts（timestamp），
-    再拿這兩個值去打 Google 內部的 batchexecute API 換回原始網址。
-
-    解碼失敗時回傳原本的 google_news_url，不中斷整體流程。
-    """
+    """將 Google News RSS 的轉址連結，換成新聞原文的真實網址。"""
     base64_str = _extract_base64_id(google_news_url)
     if not base64_str:
         return google_news_url
@@ -86,7 +74,6 @@ def decode_google_news_url(google_news_url, timeout=10):
         )
         api_resp.raise_for_status()
 
-        # 回應前兩行是防注入用的 )]}'，真正的資料從第三行開始
         parsed = json.loads(api_resp.text.split("\n\n")[1])
         real_url = json.loads(parsed[0][2])[1]
     except Exception as e:
@@ -96,45 +83,59 @@ def decode_google_news_url(google_news_url, timeout=10):
     return real_url
 
 
+def _fetch_full_text(url, lang_code):
+    """
+    用 newspaper3k 抓全文，失敗時回傳 None（不中斷整體流程）。
+    lang_code 是我們自己定義的語言代碼（如 'zh-TW', 'ja'），
+    newspaper3k 只認識前兩碼的語言代碼，這裡做個簡單轉換。
+    """
+    newspaper_lang = lang_code.split("-")[0]  # 'zh-TW' -> 'zh', 'en-US' -> 'en'
+    try:
+        article = Article(url, language=newspaper_lang)
+        article.download()
+        article.parse()
+        text = article.text.strip()
+        return text if text else None
+    except Exception as e:
+        print(f"[_fetch_full_text] 抓全文失敗（{url}）：{e}")
+        return None
+
+
 def fetch_news_rss(keyword, lang="zh-TW", country="TW", days=7):
     """
-    固定抓取Google News RSS訊息，並將每篇文章的轉址連結解析回原文真實網址
-    使用方法：關鍵字、語言
+    抓取Google News RSS訊息，將轉址連結解析回真實網址，並抓取每篇文章的全文。
+    回傳的每筆資料包含：title, publisher, content, link, published
     """
     url = f"https://news.google.com/rss/search?q={keyword}+when:{days}d&hl={lang}&gl={country}&ceid={country}:{lang}"
     feed = feedparser.parse(url)
     entries = feed.entries
 
-    # 解碼是網路 I/O bound（大部分時間在等 Google 回應），平行處理換取速度
+    # 第一步：平行解析出每篇文章的真實網址
     with ThreadPoolExecutor(max_workers=_DECODE_WORKERS) as pool:
         real_links = list(pool.map(decode_google_news_url, (entry.link for entry in entries)))
 
+    # 第二步：平行抓取每個真實網址的全文
+    with ThreadPoolExecutor(max_workers=_FETCH_WORKERS) as pool:
+        contents = list(pool.map(lambda u: _fetch_full_text(u, lang), real_links))
+
     articles = []
-    for entry, real_link in zip(entries, real_links):
-        soup = BeautifulSoup(entry.summary, 'html.parser')
-        clean_summary = soup.get_text()
+    for entry, real_link, content in zip(entries, real_links, contents):
+        if content is None:
+            # 全文抓不到就跳過這篇，不存進資料庫（也可以選擇改成存標題當備案）
+            continue
         articles.append({
             "title": entry.title,
             "publisher": entry.source.title,
-            "summary": clean_summary,
+            "content": content,
             "link": real_link,
-            "published": entry.published
-    })
+            "published": entry.published,
+        })
     return articles
 
-feed_test = feedparser.parse(
-    "https://news.google.com/rss/search?q=中日關係+when:7d&hl=zh-TW&gl=TW&ceid=TW:zh-Hant"
-)
-first_entry = feed_test.entries[0]
-print("原始連結:", first_entry.link)
-real_url = decode_google_news_url(first_entry.link)
-print("解析後連結:", real_url)
 
-from newspaper import Article
-
-article = Article(real_url, language='zh')
-article.download()
-article.parse()
-
-print("標題:", article.title)
-print("內文前300字:", article.text)
+if __name__ == "__main__":
+    results = fetch_news_rss("中日關係", days=7)
+    print(f"共抓到 {len(results)} 篇有全文的新聞")
+    if results:
+        print(results[5]["title"])
+        print(results[5]["content"][:300])
