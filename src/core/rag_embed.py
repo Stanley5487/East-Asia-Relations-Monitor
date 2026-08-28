@@ -6,7 +6,7 @@ embedding 的模型先選用免費的multilingual-e5-base，若效果不佳在�
 """
 
 import sqlite3
-from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_chroma import Chroma
 from langchain_core.documents import Document
 

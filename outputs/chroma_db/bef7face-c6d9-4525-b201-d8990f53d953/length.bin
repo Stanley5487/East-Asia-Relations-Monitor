@@ -1,0 +1,1 @@
+invalid type: string "## 自動化與部署\n\n- 使用 GitHub Actions 排程，每月自動重新抓取資料、更新特徵、產生最新一期預測，\n  不需要人工手動介入。\n- 前端使用 Streamlit 建置互動式儀表板，呈現 11 組關係的預測機率與近十年歷史趨勢。\n- 新聞資料的抓取與更新，同樣透過 GitHub Actions 排程自動執行。\n", expec

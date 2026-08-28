@@ -1,4 +1,3 @@
-import os
 from dotenv import load_dotenv
 from langchain.tools import tool
 import sqlite3
@@ -16,7 +15,11 @@ _vectorstore = Chroma(
     persist_directory="outputs/chroma_db"
 )
 _last_sources = {} 
-
+_system_vectorstore = Chroma(
+    collection_name="system_info",
+    embedding_function=_embeddings,  # 你已經有的，不用重新建立
+    persist_directory="outputs/chroma_db"
+)
 
 @tool
 def query_prediction(dyad: str) -> str:
@@ -78,6 +81,17 @@ def query_news(question: str, dyad: str) -> str:
         context_parts.append(part)
 
     context = "\n\n---\n\n".join(context_parts)
+    return context
+
+@tool
+def query_system_info(question: str) -> str:
+    """
+    查詢關於本系統本身的資訊，包含資料來源、建模方法、模型限制、系統架構等技術細節。
+    當使用者詢問「這個系統怎麼做的」、「模型怎麼訓練的」、「你是什麼」、
+    「用了什麼技術」等關於系統本身的問題時使用這個工具。
+    """
+    results = _system_vectorstore.similarity_search(question, k=2)
+    context = "\n\n".join([doc.page_content for doc in results])
     return context
 
 if __name__ == "__main__":
