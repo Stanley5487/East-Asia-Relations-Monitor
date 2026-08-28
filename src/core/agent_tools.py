@@ -15,6 +15,8 @@ _vectorstore = Chroma(
     embedding_function=_embeddings,
     persist_directory="outputs/chroma_db"
 )
+_last_sources = {} 
+
 
 @tool
 def query_prediction(dyad: str) -> str:
@@ -46,23 +48,37 @@ def query_prediction(dyad: str) -> str:
 def query_news(question: str, dyad: str) -> str:
     """
     根據問題，在指定雙邊關係(dyad)的新聞資料庫裡做語意檢索，
-    回傳最相關的幾篇新聞內容（含發布日期、標題）。
+    回傳最相關的幾篇新聞內容，並用[新聞1]、[新聞2]等代號標記。
+    回答時請直接引用這些代號（例如：日本議員團訪華[新聞1]），
+    不需要自己生成或複製網址，系統會自動在回答最後補上正確的參考來源。
     當使用者詢問「為什麼」、「原因」、「發生什麼事」等需要背景解釋的問題時使用這個工具。
     dyad格式範例：'CHN-JPN', 'CHN-TWN', 'KOR-TWN' 等。
     """
+    global _last_sources
+    _last_sources.clear()
+
     results = _vectorstore.similarity_search(question, k=5, filter={"dyad": dyad})
     context_parts = []
-    for doc in results:
+    for i, doc in enumerate(results, start=1):
+        tag = f"[新聞{i}]"
         published = doc.metadata.get("published", "日期不詳")
         title = doc.metadata.get("title", "")
-        source = doc.metadata.get("source", "來源不詳")
-        content = doc.page_content[:800]
-        part = f"【發布日期：{published}】【標題：{title}】【來源網址：{source}】\n{doc.page_content}"
+        publisher = doc.metadata.get("publisher", "來源不詳")
+        source = doc.metadata.get("source", "")
+        content = doc.page_content[:500]
+
+        _last_sources[tag] = {
+            "title": title,
+            "publisher": publisher,
+            "published": published,
+            "url": source,
+        }
+
+        part = f"{tag} 【發布日期：{published}】【媒體：{publisher}】【標題：{title}】\n{content}"
         context_parts.append(part)
 
     context = "\n\n---\n\n".join(context_parts)
     return context
-
 
 if __name__ == "__main__":
     # 測試query_prediction

@@ -1,12 +1,14 @@
 import os
+import re
+from datetime import datetime
 from dotenv import load_dotenv
 from langchain.agents import create_agent
 from langchain_groq import ChatGroq
-from agent_tools import query_prediction, query_news
+from agent_tools import query_prediction, query_news, _last_sources
 
 load_dotenv()
 
-llm = ChatGroq(model="openai/gpt-oss-120b", 
+llm = ChatGroq(model="openai/gpt-oss-120b",
                groq_api_key=os.getenv("GROQ_API_KEY"),
                temperature=0.2)
 
@@ -23,36 +25,66 @@ system_prompt = """
 
 請根據使用者問題的性質，選擇合適的工具：
 - 如果問題只需要單一工具就能完整回答，請只呼叫該工具，不要為了「看起來更完整」而多呼叫不必要的工具。
-- 如果問題確實同時需要數據和背景解釋（例如問題明確要求「說明現況並解釋原因」），才呼叫兩個工具。
+- 如果問題確實同時需要數據和背景解釋，才呼叫兩個工具。
 
-回答格式請固定遵循以下結構（若某個部分沒有對應資料，可省略該部分，但不要更動其餘部分的順序與標題）：
+回答格式請固定遵循以下結構：
 ## 現況摘要
 （1-2句話總結目前狀態）
 
 ## 詳細說明
-（用條列式，依主題分類說明，每點附上（「媒體」與「發布日期」））
-
-## 參考來源
-（列出引用的新聞標題、日期、完整網址，格式：-[媒體] [日期] 標題 (網址)）
+（用條列式，依主題分類說明，每點請直接引用對應的[新聞X]代號標記來源，
+   例如：某某事件[新聞1]。不需要自己寫參考來源區塊，系統會自動補上。）
 
 回答時使用繁體中文，語氣客觀中立。
-
 """
 
 agent = create_agent(llm, tools, system_prompt=system_prompt)
 
-# test
+
+def parse_date_to_apa(raw_date: str) -> str:
+    """把RSS原始日期格式，轉成APA格式需要的『年, 月日』"""
+    try:
+        dt = datetime.strptime(raw_date, "%a, %d %b %Y %H:%M:%S %Z")
+        return dt.strftime("%Y, %m月%d日")
+    except (ValueError, TypeError):
+        return raw_date
+
+
+def format_sources(answer_text: str) -> str:
+    """掃描回答文字裡引用了哪些新聞編號，組成APA格式的參考來源清單"""
+    numbers_used = re.findall(r"新聞(\d+)", answer_text)
+    numbers_used = sorted(set(numbers_used), key=int)
+
+    if not numbers_used:
+        return ""
+
+    lines = ["\n\n## 參考來源"]
+    for num in numbers_used:
+        tag = f"[新聞{num}]"
+        info = _last_sources.get(tag)
+        if info:
+            apa_date = parse_date_to_apa(info["published"])
+            lines.append(f"{info['publisher']}. ({apa_date}). {info['title']}. {info['url']}")
+
+    return "\n".join(lines)
+
+
 if __name__ == "__main__":
     print("Agent已啟動，輸入問題開始對話（輸入 exit 結束）")
     print("-" * 40)
-    
+
     while True:
         question = input("你的問題：")
         if question.lower() in ["exit", "quit", "q"]:
             print("結束測試")
             break
-        
+
         response = agent.invoke({"messages": [{"role": "user", "content": question}]})
+        answer = response["messages"][-1].content
+
+        sources = format_sources(answer)
+        final_answer = answer + sources
+
         print("\nAgent回答：")
-        print(response["messages"][-1].content)
+        print(final_answer)
         print("-" * 40)
