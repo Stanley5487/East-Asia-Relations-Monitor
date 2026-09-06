@@ -73,9 +73,9 @@ def format_sources(answer_text: str) -> str:
         info = _last_sources.get(tag)
         if info:
             apa_date = parse_date_to_apa(info["published"])
-            lines.append(f"{info['publisher']}. ({apa_date}). {info['title']}. {info['url']}")
+            lines.append(f"- **[新聞{num}]** {info['publisher']}. ({apa_date}). {info['title']}. {info['url']}")
 
-    return "\n".join(lines)
+    return "\n\n".join(lines)
 
 
 if __name__ == "__main__":

@@ -16,6 +16,9 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import sqlite3
+import sys
+sys.path.append("src/core")
+from agent_core import agent, format_sources
 
 # ---------------------------------------------------------------------------
 # 頁面設定與樣式
@@ -207,314 +210,347 @@ except FileNotFoundError as e:
     st.stop()
 
 
-# ---------------------------------------------------------------------------
-# 詳細面板（彈窗）
-# ---------------------------------------------------------------------------
-@st.dialog("Dyad detail", width="large")
-def show_detail(dyad):
-    row = predictions[predictions["dyad"] == dyad].iloc[0]
-    a, b = DYAD_NAMES.get(dyad, (dyad, ""))
-    forecast_month = row.get("forecast_month", "N/A")
+tab1, tab2 = st.tabs(["📊 Dashboard", "💬 AI 問答助手"])
 
-    st.markdown(f'<div class="eyebrow">{dyad} · forecast for {forecast_month}</div>', unsafe_allow_html=True)
-    st.markdown(
-        f'<h3 style="color:{COLORS['text_hi']} !important; font-family:Georgia,serif;">{a} — {b}</h3>',
-        unsafe_allow_html=True,
-    )
+with tab1: 
+    # ---------------------------------------------------------------------------
+    # 詳細面板（彈窗）
+    # ---------------------------------------------------------------------------
+    @st.dialog("Dyad detail", width="large")
+    def show_detail(dyad):
+        row = predictions[predictions["dyad"] == dyad].iloc[0]
+        a, b = DYAD_NAMES.get(dyad, (dyad, ""))
+        forecast_month = row.get("forecast_month", "N/A")
 
-    col_left, col_right = st.columns([1, 2])
-
-    with col_left:
+        st.markdown(f'<div class="eyebrow">{dyad} · forecast for {forecast_month}</div>', unsafe_allow_html=True)
         st.markdown(
-            f'<p style="color:{COLORS['text_hi']} !important; font-weight:600; margin-bottom:8px;"> Probability Prediction </p>',
+            f'<h3 style="color:{COLORS['text_hi']} !important; font-family:Georgia,serif;">{a} — {b}</h3>',
             unsafe_allow_html=True,
         )
-        for label in ["Cooperation", "Low_Conflict", "High_Conflict"]:
-            p = row[f"{label}_proba"]
-            lmeta = LABEL_META[label]
+
+        col_left, col_right = st.columns([1, 2])
+
+        with col_left:
             st.markdown(
-                f"""
-                <div style="margin-bottom:10px;">
-                    <div style="display:flex; justify-content:space-between; font-size:13px; margin-bottom:3px;">
-                        <span style="color:{COLORS['text_mid']};">{lmeta['text']}</span>
-                        <span style="font-family:'Courier New',monospace; color:{COLORS['text_hi']} !important;">{p*100:.1f}%</span>
-                    </div>
-                    <div style="height:6px; background-color:{COLORS['hairline']}; border-radius:3px; overflow:hidden;">
-                        <div style="width:{p*100}%; height:100%; background-color:{lmeta['color']};"></div>
-                    </div>
-                </div>
-                """,
+                f'<p style="color:{COLORS['text_hi']} !important; font-weight:600; margin-bottom:8px;"> Probability Prediction </p>',
                 unsafe_allow_html=True,
             )
+            for label in ["Cooperation", "Low_Conflict", "High_Conflict"]:
+                p = row[f"{label}_proba"]
+                lmeta = LABEL_META[label]
+                st.markdown(
+                    f"""
+                    <div style="margin-bottom:10px;">
+                        <div style="display:flex; justify-content:space-between; font-size:13px; margin-bottom:3px;">
+                            <span style="color:{COLORS['text_mid']};">{lmeta['text']}</span>
+                            <span style="font-family:'Courier New',monospace; color:{COLORS['text_hi']} !important;">{p*100:.1f}%</span>
+                        </div>
+                        <div style="height:6px; background-color:{COLORS['hairline']}; border-radius:3px; overflow:hidden;">
+                            <div style="width:{p*100}%; height:100%; background-color:{lmeta['color']};"></div>
+                        </div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
 
-        dyad_hist = history[history["dyad"] == dyad].sort_values("date")
-        if len(dyad_hist) > 0:
-            latest_feat = dyad_hist.iloc[-1]
+            dyad_hist = history[history["dyad"] == dyad].sort_values("date")
+            if len(dyad_hist) > 0:
+                latest_feat = dyad_hist.iloc[-1]
 
-            # Goldstein 標準差轉換成文字等級，比原始數字更容易理解
-            gstd = latest_feat['goldstein_std']
-            if pd.isna(gstd):
-                volatility_text = "N/A"
-            elif gstd < 3:
-                volatility_text = "Low"
-            elif gstd < 5:
-                volatility_text = "Moderate"
+                # Goldstein 標準差轉換成文字等級，比原始數字更容易理解
+                gstd = latest_feat['goldstein_std']
+                if pd.isna(gstd):
+                    volatility_text = "N/A"
+                elif gstd < 3:
+                    volatility_text = "Low"
+                elif gstd < 5:
+                    volatility_text = "Moderate"
+                else:
+                    volatility_text = "High"
+
+                st.markdown(
+                    f'<p style="color:{COLORS['text_hi']} !important; font-weight:600; margin-bottom:8px;">What the model saw last month</p>',
+                    unsafe_allow_html=True,
+                )
+                st.markdown(
+                    f"""
+                    <div style="font-size:13px; color:{COLORS['text_mid']}; line-height:2.1;">
+                    <span style="color:{COLORS['text_hi']} !important; font-family:'Courier New',monospace;">{latest_feat['event_count']:.0f}</span> reported diplomatic events<br/>
+                    <span style="color:{COLORS['text_hi']} !important; font-family:'Courier New',monospace;">{volatility_text}</span> volatility in event tone<br/>
+                    <span style="color:{COLORS['text_hi']} !important; font-family:'Courier New',monospace;">{latest_feat['quad4_pct']*100:.1f}%</span> involved material action, not just rhetoric<br/>
+                    <span style="color:{COLORS['text_hi']} !important; font-family:'Courier New',monospace;">{latest_feat['num_sources_sum']:.0f}</span> distinct media sources covering it
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+
+        with col_right:
+            st.markdown(
+                f'<p style="color:{COLORS['text_hi']} !important; font-weight:600; margin-bottom:8px;">Historical trend (not predictions)</p>',
+                unsafe_allow_html=True,
+            )
+            if len(dyad_hist) > 0:
+                view_mode = st.selectbox(
+                    "View",
+                    [
+                        "High-conflict share only",
+                        "Event volume vs. High-conflict share",
+                        "Event volume vs. Material conflict share",
+                    ],
+                    key=f"view_mode_{dyad}",
+                    label_visibility="collapsed",
+                )
+
+                fig = make_subplots(specs=[[{"secondary_y": True}]])
+
+                if view_mode == "High-conflict share only":
+                    fig.add_trace(
+                        go.Scatter(
+                            x=dyad_hist["date"], y=dyad_hist["high_conflict_pct"] * 100,
+                            name="High-conflict share (%)", line=dict(color=COLORS["high"], width=1.5),
+                            fill="tozeroy", fillcolor="rgba(204,105,96,0.12)",
+                        ),
+                        secondary_y=False,
+                    )
+                    fig.update_yaxes(title_text="High-conflict share (%)", secondary_y=False, gridcolor=COLORS["hairline"], color=COLORS["text_mid"])
+                    caption_text = "Share of monthly events classified as high-conflict, over time."
+                else:
+                    second_col = "quad4_pct" if "Material" in view_mode else "high_conflict_pct"
+                    second_name = "Material conflict share (%)" if "Material" in view_mode else "High-conflict share (%)"
+
+                    fig.add_trace(
+                        go.Scatter(
+                            x=dyad_hist["date"], y=dyad_hist["event_count"],
+                            name="Event volume", line=dict(color="#7FBFCF", width=1.5),
+                        ),
+                        secondary_y=False,
+                    )
+                    fig.add_trace(
+                        go.Scatter(
+                            x=dyad_hist["date"], y=dyad_hist[second_col] * 100,
+                            name=second_name, line=dict(color=COLORS["high"], width=1.5),
+                        ),
+                        secondary_y=True,
+                    )
+                    fig.update_yaxes(title_text="Event count", secondary_y=False, gridcolor=COLORS["hairline"], color=COLORS["text_mid"])
+                    fig.update_yaxes(title_text=second_name, secondary_y=True, color=COLORS["text_mid"])
+                    caption_text = (
+                        "Volume and risk moving together suggests genuine escalation. "
+                        "Volume rising alone often reflects media attention rather than deteriorating relations."
+                    )
+
+                fig.update_layout(
+                    height=320,
+                    plot_bgcolor=COLORS["panel"],
+                    paper_bgcolor=COLORS["panel"],
+                    font=dict(color=COLORS["text_mid"], size=11),
+                    margin=dict(l=10, r=10, t=30, b=10),
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0, font=dict(color=COLORS["text_hi"])),
+                    xaxis=dict(gridcolor=COLORS["hairline"], color=COLORS["text_mid"]),
+                )
+                st.plotly_chart(fig, width='stretch')
+                st.caption(caption_text)
             else:
-                volatility_text = "High"
+                st.info("No historical data available for this dyad yet.")
 
-            st.markdown(
-                f'<p style="color:{COLORS['text_hi']} !important; font-weight:600; margin-bottom:8px;">What the model saw last month</p>',
-                unsafe_allow_html=True,
-            )
-            st.markdown(
-                f"""
-                <div style="font-size:13px; color:{COLORS['text_mid']}; line-height:2.1;">
-                <span style="color:{COLORS['text_hi']} !important; font-family:'Courier New',monospace;">{latest_feat['event_count']:.0f}</span> reported diplomatic events<br/>
-                <span style="color:{COLORS['text_hi']} !important; font-family:'Courier New',monospace;">{volatility_text}</span> volatility in event tone<br/>
-                <span style="color:{COLORS['text_hi']} !important; font-family:'Courier New',monospace;">{latest_feat['quad4_pct']*100:.1f}%</span> involved material action, not just rhetoric<br/>
-                <span style="color:{COLORS['text_hi']} !important; font-family:'Courier New',monospace;">{latest_feat['num_sources_sum']:.0f}</span> distinct media sources covering it
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-
-    with col_right:
-        st.markdown(
-            f'<p style="color:{COLORS['text_hi']} !important; font-weight:600; margin-bottom:8px;">Historical trend (not predictions)</p>',
-            unsafe_allow_html=True,
-        )
-        if len(dyad_hist) > 0:
-            view_mode = st.selectbox(
-                "View",
-                [
-                    "High-conflict share only",
-                    "Event volume vs. High-conflict share",
-                    "Event volume vs. Material conflict share",
-                ],
-                key=f"view_mode_{dyad}",
-                label_visibility="collapsed",
-            )
-
-            fig = make_subplots(specs=[[{"secondary_y": True}]])
-
-            if view_mode == "High-conflict share only":
-                fig.add_trace(
-                    go.Scatter(
-                        x=dyad_hist["date"], y=dyad_hist["high_conflict_pct"] * 100,
-                        name="High-conflict share (%)", line=dict(color=COLORS["high"], width=1.5),
-                        fill="tozeroy", fillcolor="rgba(204,105,96,0.12)",
-                    ),
-                    secondary_y=False,
-                )
-                fig.update_yaxes(title_text="High-conflict share (%)", secondary_y=False, gridcolor=COLORS["hairline"], color=COLORS["text_mid"])
-                caption_text = "Share of monthly events classified as high-conflict, over time."
-            else:
-                second_col = "quad4_pct" if "Material" in view_mode else "high_conflict_pct"
-                second_name = "Material conflict share (%)" if "Material" in view_mode else "High-conflict share (%)"
-
-                fig.add_trace(
-                    go.Scatter(
-                        x=dyad_hist["date"], y=dyad_hist["event_count"],
-                        name="Event volume", line=dict(color="#7FBFCF", width=1.5),
-                    ),
-                    secondary_y=False,
-                )
-                fig.add_trace(
-                    go.Scatter(
-                        x=dyad_hist["date"], y=dyad_hist[second_col] * 100,
-                        name=second_name, line=dict(color=COLORS["high"], width=1.5),
-                    ),
-                    secondary_y=True,
-                )
-                fig.update_yaxes(title_text="Event count", secondary_y=False, gridcolor=COLORS["hairline"], color=COLORS["text_mid"])
-                fig.update_yaxes(title_text=second_name, secondary_y=True, color=COLORS["text_mid"])
-                caption_text = (
-                    "Volume and risk moving together suggests genuine escalation. "
-                    "Volume rising alone often reflects media attention rather than deteriorating relations."
-                )
-
-            fig.update_layout(
-                height=320,
-                plot_bgcolor=COLORS["panel"],
-                paper_bgcolor=COLORS["panel"],
-                font=dict(color=COLORS["text_mid"], size=11),
-                margin=dict(l=10, r=10, t=30, b=10),
-                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0, font=dict(color=COLORS["text_hi"])),
-                xaxis=dict(gridcolor=COLORS["hairline"], color=COLORS["text_mid"]),
-            )
-            st.plotly_chart(fig, width='stretch')
-            st.caption(caption_text)
-        else:
-            st.info("No historical data available for this dyad yet.")
-
-    if st.button("Close", width='stretch'):
-        st.rerun()
+        if st.button("Close", width='stretch'):
+            st.rerun()
 
 
-# ---------------------------------------------------------------------------
-# 頁首
-# ---------------------------------------------------------------------------
-run_date = predictions["run_date"].iloc[0] if "run_date" in predictions.columns else "N/A"
-forecast_month = predictions["forecast_month"].iloc[0] if "forecast_month" in predictions.columns else "N/A"
-based_on = predictions["based_on_month"].iloc[0] if "based_on_month" in predictions.columns else "N/A"
+    # ---------------------------------------------------------------------------
+    # 頁首
+    # ---------------------------------------------------------------------------
+    run_date = predictions["run_date"].iloc[0] if "run_date" in predictions.columns else "N/A"
+    forecast_month = predictions["forecast_month"].iloc[0] if "forecast_month" in predictions.columns else "N/A"
+    based_on = predictions["based_on_month"].iloc[0] if "based_on_month" in predictions.columns else "N/A"
 
-col1, col2 = st.columns([3, 1])
-with col1:
-    st.markdown('<div class="eyebrow">GDELT-derived forecast · monthly · manual refresh</div>', unsafe_allow_html=True)
-    st.title("East Asia Relations Monitor")
-with col2:
-    st.markdown(
-        f"""
-        <div style="text-align:right; font-family:'Courier New',monospace; font-size:12px; color:{COLORS['text_mid']}; padding-top: 30px;">
-        FORECASTING {forecast_month}<br/>
-        BASED ON {based_on}<br/>
-        RUN DATE {run_date}
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-st.markdown("<hr>", unsafe_allow_html=True)
-
-# ---------------------------------------------------------------------------
-# 預警橫幅：特別標示本月需要關注的關係
-# ---------------------------------------------------------------------------
-watch_list = predictions[
-    (predictions["predicted_label"] == "High_Conflict")
-    | ((predictions["predicted_label"] == "Low_Conflict") & (predictions["Low_Conflict_proba"] >= 0.40))
-].sort_values("High_Conflict_proba", ascending=False)
-
-if len(watch_list) > 0:
-    st.markdown(
-        f"""
-        <div style="border:1px solid {COLORS['high']}; background-color:rgba(204,105,96,0.06);
-                    border-radius:6px; padding:18px 20px 12px 20px; margin-bottom:32px;">
-            <div style="font-family:'Courier New',monospace; font-size:11px; letter-spacing:0.1em;
-                        text-transform:uppercase; color:{COLORS['high']}; margin-bottom:14px;">
-                &#9888; This month's watch list — {len(watch_list)} relationship(s) flagged
-            </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    watch_cols = st.columns(len(watch_list))
-    for i, (_, wrow) in enumerate(watch_list.iterrows()):
-        wdyad = wrow["dyad"]
-        wa, wb = DYAD_NAMES.get(wdyad, (wdyad, ""))
-        wmeta = LABEL_META[wrow["predicted_label"]]
-        wcoop, wlow, whigh = wrow["Cooperation_proba"], wrow["Low_Conflict_proba"], wrow["High_Conflict_proba"]
-        with watch_cols[i]:
-            st.markdown(
-                f"""
-                <div style="background-color:{COLORS['panel']}; border:1px solid {COLORS['hairline']};
-                            border-radius:6px; padding:14px; margin-bottom:8px;">
-                    <div style="font-family:'Courier New',monospace; font-size:10px; letter-spacing:0.1em;
-                                text-transform:uppercase; color:{COLORS['text_low']}; margin-bottom:4px;">
-                        {wdyad}
-                    </div>
-                    <div style="font-family:'Georgia',serif; font-size:14px; color:{COLORS['text_hi']} !important; margin-bottom:8px;">
-                        {wa} — {wb}
-                    </div>
-                    <div style="display:flex; height:5px; border-radius:3px; overflow:hidden; margin-bottom:8px;">
-                        <div style="width:{wcoop*100}%; background-color:{COLORS['cooperation']};"></div>
-                        <div style="width:{wlow*100}%; background-color:{COLORS['low']};"></div>
-                        <div style="width:{whigh*100}%; background-color:{COLORS['high']};"></div>
-                    </div>
-                    <div style="font-family:'Courier New',monospace; font-size:12px; color:{wmeta['color']};">
-                        {wmeta['text']} &middot; {whigh*100:.0f}% HC
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-            if st.button("View", key=f"watch_{wdyad}", width='stretch'):
-                show_detail(wdyad)
-    st.markdown("</div>", unsafe_allow_html=True)
-    st.markdown("<div style='height:16px;'></div>", unsafe_allow_html=True)
-else:
-    st.markdown(
-        f"""
-        <div style="border:1px solid {COLORS['cooperation']}; background-color:rgba(107,183,154,0.08);
-                    border-radius:6px; padding:14px 20px; margin-bottom:24px;
-                    font-family:'Courier New',monospace; font-size:12px; color:{COLORS['cooperation']};">
-            No relationships flagged for elevated risk this month.
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-# ---------------------------------------------------------------------------
-# 總覽：狀態統計 + 排序
-# ---------------------------------------------------------------------------
-counts = predictions["predicted_label"].value_counts()
-count_cols = st.columns(4)
-for i, label in enumerate(["Cooperation", "Low_Conflict", "High_Conflict"]):
-    meta = LABEL_META[label]
-    n = counts.get(label, 0)
-    with count_cols[i]:
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        st.markdown('<div class="eyebrow">GDELT-derived forecast · monthly · manual refresh</div>', unsafe_allow_html=True)
+        st.title("East Asia Relations Monitor")
+    with col2:
         st.markdown(
             f"""
-            <div style="display:flex; align-items:center; gap:8px;">
-                <span style="width:8px; height:8px; border-radius:50%; background-color:{meta['color']}; display:inline-block;"></span>
-                <span style="font-family:'Courier New',monospace; font-size:16px; color:{COLORS['text_hi']} !important;">{n}</span>
-                <span style="color:{COLORS['text_mid']}; font-size:13px;">{meta['text']}</span>
+            <div style="text-align:right; font-family:'Courier New',monospace; font-size:12px; color:{COLORS['text_mid']}; padding-top: 30px;">
+            FORECASTING {forecast_month}<br/>
+            BASED ON {based_on}<br/>
+            RUN DATE {run_date}
             </div>
             """,
             unsafe_allow_html=True,
         )
 
-with count_cols[3]:
-    sort_mode = st.selectbox("Sort by", ["Risk (High Conflict %)", "Alphabetical"], label_visibility="collapsed")
+    st.markdown("<hr>", unsafe_allow_html=True)
 
-if sort_mode == "Risk (High Conflict %)":
-    predictions_sorted = predictions.sort_values("High_Conflict_proba", ascending=False)
-else:
-    predictions_sorted = predictions.sort_values("dyad")
+    # ---------------------------------------------------------------------------
+    # 預警橫幅：特別標示本月需要關注的關係
+    # ---------------------------------------------------------------------------
+    watch_list = predictions[
+        (predictions["predicted_label"] == "High_Conflict")
+        | ((predictions["predicted_label"] == "Low_Conflict") & (predictions["Low_Conflict_proba"] >= 0.40))
+    ].sort_values("High_Conflict_proba", ascending=False)
 
-st.markdown("<br/>", unsafe_allow_html=True)
+    if len(watch_list) > 0:
+        st.markdown(
+            f"""
+            <div style="border:1px solid {COLORS['high']}; background-color:rgba(204,105,96,0.06);
+                        border-radius:6px; padding:18px 20px 12px 20px; margin-bottom:32px;">
+                <div style="font-family:'Courier New',monospace; font-size:11px; letter-spacing:0.1em;
+                            text-transform:uppercase; color:{COLORS['high']}; margin-bottom:14px;">
+                    &#9888; This month's watch list — {len(watch_list)} relationship(s) flagged
+                </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        watch_cols = st.columns(len(watch_list))
+        for i, (_, wrow) in enumerate(watch_list.iterrows()):
+            wdyad = wrow["dyad"]
+            wa, wb = DYAD_NAMES.get(wdyad, (wdyad, ""))
+            wmeta = LABEL_META[wrow["predicted_label"]]
+            wcoop, wlow, whigh = wrow["Cooperation_proba"], wrow["Low_Conflict_proba"], wrow["High_Conflict_proba"]
+            with watch_cols[i]:
+                st.markdown(
+                    f"""
+                    <div style="background-color:{COLORS['panel']}; border:1px solid {COLORS['hairline']};
+                                border-radius:6px; padding:14px; margin-bottom:8px;">
+                        <div style="font-family:'Courier New',monospace; font-size:10px; letter-spacing:0.1em;
+                                    text-transform:uppercase; color:{COLORS['text_low']}; margin-bottom:4px;">
+                            {wdyad}
+                        </div>
+                        <div style="font-family:'Georgia',serif; font-size:14px; color:{COLORS['text_hi']} !important; margin-bottom:8px;">
+                            {wa} — {wb}
+                        </div>
+                        <div style="display:flex; height:5px; border-radius:3px; overflow:hidden; margin-bottom:8px;">
+                            <div style="width:{wcoop*100}%; background-color:{COLORS['cooperation']};"></div>
+                            <div style="width:{wlow*100}%; background-color:{COLORS['low']};"></div>
+                            <div style="width:{whigh*100}%; background-color:{COLORS['high']};"></div>
+                        </div>
+                        <div style="font-family:'Courier New',monospace; font-size:12px; color:{wmeta['color']};">
+                            {wmeta['text']} &middot; {whigh*100:.0f}% HC
+                        </div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+                if st.button("View", key=f"watch_{wdyad}", width='stretch'):
+                    show_detail(wdyad)
+        st.markdown("</div>", unsafe_allow_html=True)
+        st.markdown("<div style='height:16px;'></div>", unsafe_allow_html=True)
+    else:
+        st.markdown(
+            f"""
+            <div style="border:1px solid {COLORS['cooperation']}; background-color:rgba(107,183,154,0.08);
+                        border-radius:6px; padding:14px 20px; margin-bottom:24px;
+                        font-family:'Courier New',monospace; font-size:12px; color:{COLORS['cooperation']};">
+                No relationships flagged for elevated risk this month.
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
-# ---------------------------------------------------------------------------
-# Dyad 卡片網格 — 點擊直接彈出詳細視窗，不需往下捲動
-# ---------------------------------------------------------------------------
-cols = st.columns(3)
-for idx, (_, row) in enumerate(predictions_sorted.iterrows()):
-    dyad = row["dyad"]
-    label = row["predicted_label"]
-    meta = LABEL_META[label]
-    a, b = DYAD_NAMES.get(dyad, (dyad, ""))
-    coop, low, high = row["Cooperation_proba"], row["Low_Conflict_proba"], row["High_Conflict_proba"]
-
-    with cols[idx % 3]:
-        with st.container(border=True):
+    # ---------------------------------------------------------------------------
+    # 總覽：狀態統計 + 排序
+    # ---------------------------------------------------------------------------
+    counts = predictions["predicted_label"].value_counts()
+    count_cols = st.columns(4)
+    for i, label in enumerate(["Cooperation", "Low_Conflict", "High_Conflict"]):
+        meta = LABEL_META[label]
+        n = counts.get(label, 0)
+        with count_cols[i]:
             st.markdown(
                 f"""
-                <div class="eyebrow">{dyad}</div>
-                <div style="font-family:'Georgia',serif; font-size:15px; margin-bottom:8px; color:{COLORS['text_hi']} !important;">{a} — {b}</div>
-                <div style="display:flex; height:6px; border-radius:3px; overflow:hidden; margin-bottom:8px;">
-                    <div style="width:{coop*100}%; background-color:{COLORS['cooperation']};"></div>
-                    <div style="width:{low*100}%; background-color:{COLORS['low']};"></div>
-                    <div style="width:{high*100}%; background-color:{COLORS['high']};"></div>
-                </div>
-                <div style="display:flex; justify-content:space-between; font-family:'Courier New',monospace; font-size:12px; margin-bottom:10px;">
-                    <span style="color:{meta['color']};">{meta['text']}</span>
-                    <span style="color:{COLORS['text_mid']};">{high*100:.0f}% HC</span>
+                <div style="display:flex; align-items:center; gap:8px;">
+                    <span style="width:8px; height:8px; border-radius:50%; background-color:{meta['color']}; display:inline-block;"></span>
+                    <span style="font-family:'Courier New',monospace; font-size:16px; color:{COLORS['text_hi']} !important;">{n}</span>
+                    <span style="color:{COLORS['text_mid']}; font-size:13px;">{meta['text']}</span>
                 </div>
                 """,
                 unsafe_allow_html=True,
             )
-            if st.button("View detail", key=f"btn_{dyad}", width='stretch'):
-                show_detail(dyad)
 
-# ---------------------------------------------------------------------------
-# 頁尾：方法論說明
-# ---------------------------------------------------------------------------
-st.markdown("<hr>", unsafe_allow_html=True)
-st.caption(
-    "Model trained and validated on these 11 dyads only (2015–2025 GDELT event data). "
-    "Leave-one-dyad-out testing showed reduced reliability on unseen relationships, "
-    "so forecasts are not generated for dyads outside this set. Probabilities reflect a "
-    "LightGBM classifier's forecast for the next month's dominant relationship category; "
-    f"decision thresholds (High Conflict \u2265 {THRESHOLDS['High_Conflict']*100:.1f}%, "
-    f"Low Conflict \u2265 {THRESHOLDS['Low_Conflict']*100:.1f}%) were tuned on a held-out test "
-    "period, not the default 50% cutoff. Historical trend charts use actual GDELT-derived "
-    "features, not model predictions."
-)
+    with count_cols[3]:
+        sort_mode = st.selectbox("Sort by", ["Risk (High Conflict %)", "Alphabetical"], label_visibility="collapsed")
+
+    if sort_mode == "Risk (High Conflict %)":
+        predictions_sorted = predictions.sort_values("High_Conflict_proba", ascending=False)
+    else:
+        predictions_sorted = predictions.sort_values("dyad")
+
+    st.markdown("<br/>", unsafe_allow_html=True)
+
+    # ---------------------------------------------------------------------------
+    # Dyad 卡片網格 — 點擊直接彈出詳細視窗，不需往下捲動
+    # ---------------------------------------------------------------------------
+    cols = st.columns(3)
+    for idx, (_, row) in enumerate(predictions_sorted.iterrows()):
+        dyad = row["dyad"]
+        label = row["predicted_label"]
+        meta = LABEL_META[label]
+        a, b = DYAD_NAMES.get(dyad, (dyad, ""))
+        coop, low, high = row["Cooperation_proba"], row["Low_Conflict_proba"], row["High_Conflict_proba"]
+
+        with cols[idx % 3]:
+            with st.container(border=True):
+                st.markdown(
+                    f"""
+                    <div class="eyebrow">{dyad}</div>
+                    <div style="font-family:'Georgia',serif; font-size:15px; margin-bottom:8px; color:{COLORS['text_hi']} !important;">{a} — {b}</div>
+                    <div style="display:flex; height:6px; border-radius:3px; overflow:hidden; margin-bottom:8px;">
+                        <div style="width:{coop*100}%; background-color:{COLORS['cooperation']};"></div>
+                        <div style="width:{low*100}%; background-color:{COLORS['low']};"></div>
+                        <div style="width:{high*100}%; background-color:{COLORS['high']};"></div>
+                    </div>
+                    <div style="display:flex; justify-content:space-between; font-family:'Courier New',monospace; font-size:12px; margin-bottom:10px;">
+                        <span style="color:{meta['color']};">{meta['text']}</span>
+                        <span style="color:{COLORS['text_mid']};">{high*100:.0f}% HC</span>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+                if st.button("View detail", key=f"btn_{dyad}", width='stretch'):
+                    show_detail(dyad)
+
+    # ---------------------------------------------------------------------------
+    # 頁尾：方法論說明
+    # ---------------------------------------------------------------------------
+    st.markdown("<hr>", unsafe_allow_html=True)
+    st.caption(
+        "Model trained and validated on these 11 dyads only (2015–2025 GDELT event data). "
+        "Leave-one-dyad-out testing showed reduced reliability on unseen relationships, "
+        "so forecasts are not generated for dyads outside this set. Probabilities reflect a "
+        "LightGBM classifier's forecast for the next month's dominant relationship category; "
+        f"decision thresholds (High Conflict \u2265 {THRESHOLDS['High_Conflict']*100:.1f}%, "
+        f"Low Conflict \u2265 {THRESHOLDS['Low_Conflict']*100:.1f}%) were tuned on a held-out test "
+        "period, not the default 50% cutoff. Historical trend charts use actual GDELT-derived "
+        "features, not model predictions."
+    )
+
+with tab2:
+    st.title("💬 AI 問答助手")
+    st.caption("詢問東亞11組雙邊關係的現況、原因或系統本身的技術細節")
+
+    # 初始化對話歷史
+    if "chat_history" not in st.session_state:
+        st.session_state.chat_history = []
+
+    # 顯示歷史對話
+    for role, content in st.session_state.chat_history:
+        with st.chat_message(role):
+            st.markdown(content)
+
+    # 輸入框
+    user_input = st.chat_input("輸入你的問題...")
+    if user_input:
+        st.session_state.chat_history.append(("user", user_input))
+        with st.chat_message("user"):
+            st.markdown(user_input)
+
+        with st.chat_message("assistant"):
+            with st.spinner("思考中..."):
+                response = agent.invoke({"messages": [{"role": "user", "content": user_input}]})
+                answer = response["messages"][-1].content
+                sources = format_sources(answer)
+                final_answer = answer + sources
+                st.markdown(final_answer)
+
+        st.session_state.chat_history.append(("assistant", final_answer))
