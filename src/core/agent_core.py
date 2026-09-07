@@ -8,9 +8,9 @@ from agent_tools import query_prediction, query_news, query_system_info, _last_s
 
 load_dotenv()
 
-llm = ChatGroq(model="openai/gpt-oss-120b",
-               groq_api_key=os.getenv("GROQ_API_KEY"),
-               temperature=0.2)
+# 預設使用能力最強的模型；若當日流量/token額度用盡，會自動切換到備用模型繼續服務
+PRIMARY_MODEL = "openai/gpt-oss-120b"
+FALLBACK_MODEL = "openai/gpt-oss-20b"
 
 tools = [query_prediction, query_news, query_system_info]
 
@@ -44,10 +44,40 @@ system_prompt = """
 請直接用條列式清楚說明，不需要套用「現況摘要」這種格式，
 可以視內容需要自行安排標題（例如：## 系統架構、## 建模方法等）
 
+若引用query_prediction的數據，請在該處標註「【本專案數據】」，
+不要直接寫出工具的程式碼名稱（例如query_prediction）。
+
 回答時使用繁體中文，語氣客觀中立。
 """
 
-agent = create_agent(llm, tools, system_prompt=system_prompt)
+def _build_agent(model_name: str):
+    llm = ChatGroq(model=model_name,
+                    groq_api_key=os.getenv("GROQ_API_KEY"),
+                    temperature=0.2)
+    return create_agent(llm, tools, system_prompt=system_prompt)
+
+
+agent = _build_agent(PRIMARY_MODEL)
+_fallback_agent = _build_agent(FALLBACK_MODEL)
+
+
+def _is_rate_limit_error(e: Exception) -> bool:
+    err_text = str(e).lower()
+    return "rate_limit" in err_text or "429" in err_text or "tokens per" in err_text
+
+
+def invoke_with_fallback(messages: list) -> tuple:
+    """
+    預設用最強的主要模型回答；若主要模型當下流量/token已達上限，
+    自動切換到備用模型重試這一次請求，讓使用者不會完全無法使用。
+    回傳 (response, used_fallback)。若備用模型也失敗，則會提醒使用者錯誤。
+    """
+    try:
+        return agent.invoke({"messages": messages}), False
+    except Exception as e:
+        if not _is_rate_limit_error(e):
+            raise
+        return _fallback_agent.invoke({"messages": messages}), True
 
 
 def parse_date_to_apa(raw_date: str) -> str:
@@ -59,23 +89,38 @@ def parse_date_to_apa(raw_date: str) -> str:
         return raw_date
 
 
-def format_sources(answer_text: str) -> str:
-    """掃描回答文字裡引用了哪些新聞編號，組成APA格式的參考來源清單"""
+def format_sources(answer_text: str) -> tuple:
+    """
+    掃描回答文字裡引用了哪些新聞編號，組成APA格式的參考來源清單
+    修正:編號顯示跳號問題
+    """
     numbers_used = re.findall(r"新聞(\d+)", answer_text)
     numbers_used = sorted(set(numbers_used), key=int)
 
     if not numbers_used:
-        return ""
+        return answer_text, ""
+
+    # 建立「原始編號 -> 連續新編號」的對照表(因最初只會顯示其內部檢索的編號，使用者閱讀起來會很奇怪)
+    renumber_map = {old: str(new) for new, old in enumerate(numbers_used, start=1)}
+
+    # 把內文裡的舊編號，替換成連續的新編號
+    def replace_number(match):
+        old_num = match.group(1)
+        return f"新聞{renumber_map[old_num]}"
+
+    fixed_answer = re.sub(r"新聞(\d+)", replace_number, answer_text)
 
     lines = ["\n\n## 參考來源"]
-    for num in numbers_used:
-        tag = f"[新聞{num}]"
+    for old_num in numbers_used:
+        new_num = renumber_map[old_num]
+        tag = f"[新聞{old_num}]"
         info = _last_sources.get(tag)
         if info:
             apa_date = parse_date_to_apa(info["published"])
-            lines.append(f"- **[新聞{num}]** {info['publisher']}. ({apa_date}). {info['title']}. {info['url']}")
+            lines.append(f"- **[新聞{new_num}]** {info['publisher']}. ({apa_date}). {info['title']}. {info['url']}")
 
-    return "\n\n".join(lines)
+    sources_text = "\n\n".join(lines)
+    return fixed_answer, sources_text
 
 
 if __name__ == "__main__":
@@ -91,7 +136,7 @@ if __name__ == "__main__":
         response = agent.invoke({"messages": [{"role": "user", "content": question}]})
         answer = response["messages"][-1].content
 
-        sources = format_sources(answer)
+        fixed_answer, sources = format_sources(answer)
         final_answer = answer + sources
 
         print("\nAgent回答：")

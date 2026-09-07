@@ -18,7 +18,7 @@ from plotly.subplots import make_subplots
 import sqlite3
 import sys
 sys.path.append("src/core")
-from agent_core import agent, format_sources
+from agent_core import invoke_with_fallback, format_sources
 
 # ---------------------------------------------------------------------------
 # 頁面設定與樣式
@@ -173,6 +173,22 @@ st.markdown(
     .stCaption, [data-testid="stCaptionContainer"] p {{
         color: {COLORS['text_low']} !important;
     }}
+
+    /* 聊天輸入框固定在畫面最下方（st.chat_input 放在 st.tabs 內預設會變成 inline，
+       這裡手動釘住；因為它位於 tab2 的 stTabPanel 內，切到 Dashboard 分頁時
+       該 panel 會被設成 display:none，輸入框也會一併隱藏，不會蓋住 Dashboard） */
+    div[data-testid="stChatInput"] {{
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        max-width: 1200px;
+        margin: 0 auto;
+        z-index: 999;
+        background-color: {COLORS['bg']};
+        padding: 12px 24px 20px 24px;
+        border-top: 1px solid {COLORS['hairline']};
+    }}
     </style>
     """,
     unsafe_allow_html=True,
@@ -210,7 +226,7 @@ except FileNotFoundError as e:
     st.stop()
 
 
-tab1, tab2 = st.tabs(["📊 Dashboard", "💬 AI 問答助手"])
+tab1, tab2 = st.tabs(["Dashboard", "AI 問答助手"])
 
 with tab1: 
     # ---------------------------------------------------------------------------
@@ -526,19 +542,30 @@ with tab1:
     )
 
 with tab2:
-    st.title("💬 AI 問答助手")
-    st.caption("詢問東亞11組雙邊關係的現況、原因或系統本身的技術細節")
+    st.title("AI 問答助手")
+    st.caption("本AI助手可東亞雙邊關係的現況與本系統資訊")
+    st.caption("AI可能會出錯，請謹慎查證!")
+    # 送給 Agent 的對話上下文預設保留幾則訊息（含使用者+AI），避免單次請求token過大
+    DEFAULT_CONTEXT_MESSAGES = 6
+    # 觸發token上限時，上下文視窗最少會縮小到幾則（畫面顯示不受影響，永遠完整）
+    MIN_CONTEXT_MESSAGES = 1
 
-    # 初始化對話歷史
+    # 初始化對話歷史（畫面上永遠完整顯示，不會因流量限制被刪減）
     if "chat_history" not in st.session_state:
         st.session_state.chat_history = []
+    # 送給 Agent 的上下文視窗大小；跟畫面顯示分開管理，觸發流量上限時只縮小這個
+    if "context_window" not in st.session_state:
+        st.session_state.context_window = DEFAULT_CONTEXT_MESSAGES
 
-    # 顯示歷史對話
+    # 顯示歷史對話（完整顯示全部紀錄）
     for role, content in st.session_state.chat_history:
         with st.chat_message(role):
             st.markdown(content)
 
-    # 輸入框
+    # 預留空間，避免最後一則訊息被固定在下方的輸入框擋住
+    st.markdown("<div style='height:20px;'></div>", unsafe_allow_html=True)
+
+    # 輸入框（固定在畫面最下方，樣式見上方 CSS）
     user_input = st.chat_input("輸入你的問題...")
     if user_input:
         st.session_state.chat_history.append(("user", user_input))
@@ -547,10 +574,38 @@ with tab2:
 
         with st.chat_message("assistant"):
             with st.spinner("思考中..."):
-                response = agent.invoke({"messages": [{"role": "user", "content": user_input}]})
-                answer = response["messages"][-1].content
-                sources = format_sources(answer)
-                final_answer = answer + sources
-                st.markdown(final_answer)
+                try:
+                    # 只取最近N則訊息送給Agent（畫面上仍完整顯示全部歷史），藉此控制單次請求的token量
+                    recent_history = st.session_state.chat_history[-st.session_state.context_window:]
+                    messages = [{"role": role, "content": content} for role, content in recent_history]
 
+                    response, used_fallback = invoke_with_fallback(messages)
+                    answer = response["messages"][-1].content
+                    fixed_answer, sources = format_sources(answer)
+                    final_answer = fixed_answer + sources
+                    if used_fallback:
+                        final_answer = (
+                            "_（提醒：主要模型目前流量已達上限，本次回答已自動切換備用模型，"
+                            "回答品質可能略有落差）_\n\n" + final_answer
+                        )
+                except Exception as e:
+                    err_text = str(e).lower()
+                    is_rate_limit = (
+                        "rate_limit" in err_text
+                        or "429" in err_text
+                        or "tokens per" in err_text
+                    )
+                    if is_rate_limit:
+                        # 縮小送給Agent的上下文視窗，降低下次請求的token量；畫面上的對話紀錄不受影響
+                        st.session_state.context_window = max(
+                            MIN_CONTEXT_MESSAGES, st.session_state.context_window // 2
+                        )
+                        final_answer = (
+                            "抱歉，目前對話流量已達到系統上限（由於經費有限，本系統使用免費版API），"
+                            "已自動縮短送給AI的對話上下文以降低用量，畫面上的對話紀錄仍會完整保留。"
+                            "請稍待片刻再重新提問，或簡化問題內容。"
+                        )
+                    else:
+                        final_answer = f"發生錯誤，請稍後再試。（{type(e).__name__}）"
+                st.markdown(final_answer)
         st.session_state.chat_history.append(("assistant", final_answer))
