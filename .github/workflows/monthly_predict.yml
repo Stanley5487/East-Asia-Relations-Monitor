@@ -2,7 +2,7 @@ name: Monthly Prediction Update
 
 on:
   schedule:
-    - cron: '0 1 1 * *'
+    - cron: '0 16 1 * *'  
   workflow_dispatch:
 
 jobs:
@@ -28,6 +28,9 @@ jobs:
 
       - name: Run prediction pipeline
         run: python src/predict_pipeline.py
+
+      - name: Convert updated CSVs to SQLite
+        run: python scripts/csv_to_sqlite.py
 
       - name: Update last-updated date in README
         run: |
