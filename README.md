@@ -4,10 +4,11 @@
 
 系統包含兩個部分：
 
-1. **月度預測**：一套從資料擷取、特徵工程、模型訓練到每月預測的完整機器學習流程。模型使用 LightGBM 產生各類別的預測機率，再透過 Streamlit 將結果整理成可以直接查看的 Dashboard。
+1. **月度預測**：一套從資料擷取、特徵工程、模型訓練到每月預測的完整機器學習流程。模型使用 LightGBM 產生各雙邊關係的預測機率，再透過 Streamlit 將結果整理成可以直接查看的 Dashboard。
 2. **AI 問答助手（RAG Agent）**：一個基於 LangChain 的 Agent，會依問題性質自主決定要查詢預測數據、新聞向量庫或系統說明文件，讓使用者能用自然語言追問「為什麼」與「發生了什麼事」。
+(未來打算納入國際關係理論的作為專業知識文獻，使Agent能夠使用理論進行簡單分析)
 
-> **目前預測的 11 組雙邊關係：** 中日、中台、兩韓等。
+> **目前系統預測 11 組雙邊關係：** 例如中日、中台、兩韓等。
 
 [**查看成果網站 →**](https://east-asia-relations-monitor-s4kkyibvoyugw6ik2j6feh.streamlit.app/)
 
@@ -19,15 +20,15 @@
 
 ### 月度預測
 
-系統每月使用前一個月的完整資料，預測下一個月的雙邊關係走向。
+系統每月使用前一個月的完整資料，預測下一個月的雙邊關係走向（合作、低度衝突、高度衝突）。
 
-和單純輸出一個分類結果不同，模型會同時輸出：
+且模型會同時輸出：
 
 - 合作機率
 - 低度衝突機率
 - 高度衝突機率
 
-因此使用者可以自己判斷目前的風險程度。例如模型可能認為某組關係有 60% 的低度衝突機率，但同時仍有 25% 的高度衝突機率。這種情況下，比直接顯示「低度衝突」更能保留模型的不確定性。
+使用者可以自己判斷目前的風險程度。例如模型可能認為某組關係有 60% 的低度衝突機率，但同時仍有 25% 的高度衝突機率。這種情況下，比直接顯示「低度衝突」更能保留關係的樣貌。
 
 目前系統主要針對已訓練的 11 組雙邊關係進行預測。
 
@@ -35,13 +36,13 @@
 
 預測數據回答的是「機率多少」，但使用者常常想再追問「為什麼」。
 
-系統因此另外蒐集多語言新聞、建立向量資料庫，並用一個 LangChain Agent 把三種資料來源（預測數據、新聞、系統說明）整合起來，讓使用者用一般語言就能查詢，回答時並附上可查證的新聞來源。詳見下方 [AI 問答助手（RAG Agent）](#ai-問答助手rag-agent)。
+系統因此另外蒐集多國語言的新聞後，建立向量資料庫，並用 LangChain 把三種資料來源（預測數據、新聞、系統說明）整合起來，讓使用者用一般語言就能查詢，回答時同時附上可查證的新聞來源。詳見下方 [AI 問答助手（RAG Agent）](#ai-問答助手rag-agent)。
 
 ---
 
 ## 系統流程
 
-系統有兩條資料流程，最後都匯入同一個 Streamlit 網站。
+系統有兩個資料流程，最後都匯入同一個 Streamlit 網站。
 
 ```text
 預測流程（每月）                          問答流程（每週）
@@ -49,23 +50,23 @@
 GDELT / V-Dem                            Google News RSS（多語言）
       │                                        │  解析轉址、擷取全文
       ▼                                        ▼
-資料自動化擷取與整理                        SQLite articles 表
+資料自動化擷取與整理                        SQLite 
       │                                        │  multilingual-e5-base
       ▼                                        ▼
-月度雙邊特徵                               Chroma 向量庫  ◄── docs/about_system.md
+月度雙邊特徵                               Chroma 向量庫  
       │                                        │
       ▼                                        ▼
-LightGBM ─► 三類別機率預測                 LangChain Agent（Groq LLM，三個檢索工具）
+LightGBM ─► 三類別機率預測                 LangChain Agent（三個檢索工具）
       │                                        │
       ▼                                        ▼
-SQLite predictions 表                     問答結果（附新聞來源）
+SQLite predictions 表                     問答結果（附新聞來源網址）
       │                                        │
       └────────────────┬───────────────────────┘
                        ▼
-            Streamlit（Dashboard + 聊天分頁）
+            Streamlit（Dashboard + AI 問答助手）
 ```
 
-GitHub Actions 負責排程：預測流程每月更新一次，新聞抓取與 embedding 每週更新一次；網站則負責呈現最新預測、歷史趨勢與問答介面。
+GitHub Actions 負責排程：預測流程每月更新一次，新聞抓取與 embedding 每週更新一次。
 
 ---
 
@@ -127,6 +128,8 @@ AUC 主要衡量模型把不同類別的樣本排序開來的能力；而 recall
 
 Agent 會依問題性質，自己決定要查哪一種資料來源，而不是把所有東西都塞進同一個 prompt。
 
+![AI 問答助手分頁：聊天問答機器人](assets/ai_agent.png)
+
 ### 三個檢索工具
 
 | 工具 | 資料來源 | 適合的問題 |
@@ -137,13 +140,11 @@ Agent 會依問題性質，自己決定要查哪一種資料來源，而不是�
 
 ### 詳細流程
 
-（上方「系統流程」的問答流程展開後，各檔案實際做的事）
-
 ```text
 Google News RSS（繁中／簡中／英／日／韓／越，依關係差異化選語言）
       │  news_fetch.py：解析轉址取得原文網址 → newspaper3k 擷取全文
       ▼
-SQLite  articles 表（source_url UNIQUE 去重，embedded 欄位標記狀態）
+　　SQLite
       │  rag_embed.py：撈出 embedded = 0 的文章
       ▼
 multilingual-e5-base embedding
@@ -154,22 +155,11 @@ Chroma 向量庫（outputs/chroma_db）
    └── system_info    ← docs/about_system.md 依段落切分（embed_system_info.py）
       │
       ▼
-LangChain Agent（LLM：Groq openai/gpt-oss-120b，額度用盡自動 fallback 到 gpt-oss-20b）
+LangChain Agent（LLM：Groq openai/gpt-oss-120b，免費額度用盡自動使用 gpt-oss-20b）
       │  format_sources：掃描回答中的 [新聞N] 標記，自動補上 APA 格式參考來源
       ▼
 Streamlit 聊天分頁（帶最近數輪對話上下文）
 ```
-
-### 幾個設計上的取捨
-
-- **多語言 embedding**：新聞用 `intfloat/multilingual-e5-base` 轉向量，使用者用中文提問也能檢索到日文、韓文報導；同一組關係會刻意同時抓繁中與簡中，補上不同敘事角度。
-- **檢索範圍用 metadata 過濾**：`query_news` 會用 `dyad` 欄位過濾，避免中日的問題檢索到兩韓的新聞。
-- **來源可查證**：回答裡的 `[新聞1]` 等標記會在最後被換成連續編號，並附上媒體、發布日期與原文網址。
-- **系統說明也走 RAG**：關於系統本身的問題不寫死在 prompt 裡，而是從 `docs/about_system.md` 檢索，改文件就能更新 Agent 的回答。
-
-### 自動更新
-
-`.github/workflows/weekly_news_update.yml` 每週排程執行：抓取新聞 → 對新文章做 embedding → 把更新後的 `relations.db` 與 `chroma_db` commit 回 repo。
 
 ---
 
@@ -193,7 +183,7 @@ Streamlit 聊天分頁（帶最近數輪對話上下文）
 
 ### 2. V-Dem 特徵的重要性很高，但不一定代表模型真的學到了政體差異
 
-延續原本研究中的民主和平論邏輯，我加入了兩國 V-Dem 民主分數的差異作為特徵。
+延續原本碩論研究中的民主和平論，我加入了兩國 V-Dem 民主分數的差異作為特徵。
 
 結果發現，這個特徵的 LightGBM gain 遠高於其他特徵。
 
@@ -259,7 +249,7 @@ Leave-One-Dyad-Out 驗證顯示，當模型需要預測完全沒看過的新國�
 
 > **「這個月剩下的時間會怎麼發展？」**
 
-未來可以考慮加入不同 forecasting horizon，例如：
+未來可以考慮加入不同預測時間範圍，例如：
 
 - Next week
 - Next month
@@ -289,7 +279,7 @@ Leave-One-Dyad-Out 驗證顯示，當模型需要預測完全沒看過的新國�
 ```
 .
 ├── src/
-│   ├── core/                  # shared logic
+│   ├── core/                  
 │   │   ├── news_fetch.py       # Google News RSS 抓取與全文擷取
 │   │   ├── dyad_config.py      # 11 組關係的多語言搜尋關鍵字
 │   │   ├── batch_fetch.py      # 批次抓新聞寫入 SQLite
@@ -299,15 +289,15 @@ Leave-One-Dyad-Out 驗證顯示，當模型需要預測完全沒看過的新國�
 │   │   └── agent_core.py       # Agent 組裝、模型 fallback、來源格式化
 │   ├── training/               # training-stage scripts (batch fetch, init history, retrain)
 │   ├── predict_pipeline.py     # monthly prediction pipeline
-│   └── app.py                  # Streamlit app（含聊天分頁）
+│   └── app.py                  # Streamlit app
 ├── scripts/
 │   └── embed_system_info.py    # 把 docs/about_system.md 存入 system_info 向量庫
 ├── docs/about_system.md        # 系統說明（同時作為 RAG 的知識來源）
 ├── outputs/
 │   ├── relations.db            # SQLite（預測結果、新聞文章）
 │   └── chroma_db/              # Chroma 向量庫（news_articles、system_info）
-├── notebooks/                  # full analysis process
-└── DEVLOG.md                  # detailed methodology & experiment log
+├── notebooks/                  # 建模過程
+└── DEVLOG.md                  # 詳細的開發過程和方法論
 ```
 
 ---
@@ -338,7 +328,7 @@ python src/core/batch_fetch.py
 # 對尚未處理的文章做 embedding，存入 Chroma
 python src/core/rag_embed.py
 
-# 更新系統說明知識庫（改過 docs/about_system.md 後執行）
+# 更新系統說明知識庫
 python scripts/embed_system_info.py
 
 # 在終端機直接和 Agent 對話測試
@@ -354,8 +344,3 @@ python src/core/agent_core.py
 第一次開啟可能需要等待約 10–20 秒，讓 Streamlit 服務重新啟動。
 
 ---
-
-## 補充
-這個專案的重點不只是模型最後得到多少分數，而是從原始事件資料開始，實際處理資料定義、label imbalance、時間切分、dyad generalization，以及 probability 和 threshold 之間的差異。
-
-目前版本仍有不少限制，但也因此把模型在實際資料上的問題記錄下來，作為後續版本調整的依據。
