@@ -189,6 +189,34 @@ st.markdown(
         padding: 12px 24px 20px 24px;
         border-top: 1px solid {COLORS['hairline']};
     }}
+
+    /* 分頁列（Dashboard / AI 問答助手）— 改成跟 eyebrow 標籤一致的等寬大寫風格，取代預設樣式 */
+    div[role="tablist"] {{
+        gap: 36px;
+        border-bottom: 1px solid {COLORS['hairline']};
+    }}
+    div[data-testid="stTab"] {{
+        background-color: transparent !important;
+        padding: 0 0 16px 0 !important;
+    }}
+    div[data-testid="stTab"] [data-testid="stMarkdownContainer"] p {{
+        font-family: 'Courier New', monospace !important;
+        font-size: 12px;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: {COLORS['text_low']} !important;
+        transition: color 0.15s ease;
+    }}
+    div[data-testid="stTab"]:hover [data-testid="stMarkdownContainer"] p {{
+        color: {COLORS['text_mid']} !important;
+    }}
+    div[data-testid="stTab"][aria-selected="true"] [data-testid="stMarkdownContainer"] p {{
+        color: {COLORS['text_hi']} !important;
+    }}
+    div[data-testid="stTab"] .react-aria-SelectionIndicator {{
+        background-color: {COLORS['high']} !important;
+        height: 2px !important;
+    }}
     </style>
     """,
     unsafe_allow_html=True,
