@@ -2,7 +2,10 @@
 
 使用 GDELT 事件資料，每月預測東亞 11 組雙邊關係下個月的互動狀態，分為 **合作、低度衝突、高度衝突** 三類。
 
-這是一套從資料擷取、特徵工程、模型訓練到每月預測的完整機器學習流程。模型使用 LightGBM 產生各類別的預測機率，再透過 Streamlit 將結果整理成可以直接查看的 Dashboard。
+系統包含兩個部分：
+
+1. **月度預測**：一套從資料擷取、特徵工程、模型訓練到每月預測的完整機器學習流程。模型使用 LightGBM 產生各類別的預測機率，再透過 Streamlit 將結果整理成可以直接查看的 Dashboard。
+2. **AI 問答助手（RAG Agent）**：一個基於 LangChain 的 Agent，會依問題性質自主決定要查詢預測數據、新聞向量庫或系統說明文件，讓使用者能用自然語言追問「為什麼」與「發生了什麼事」。
 
 > **目前預測的 11 組雙邊關係：** 中日、中台、兩韓等。
 
@@ -13,6 +16,8 @@
 ---
 
 ## 專案簡介
+
+### 月度預測
 
 系統每月使用前一個月的完整資料，預測下一個月的雙邊關係走向。
 
@@ -26,33 +31,43 @@
 
 目前系統主要針對已訓練的 11 組雙邊關係進行預測。
 
+### AI 問答助手
+
+預測數據回答的是「機率多少」，但使用者常常想再追問「為什麼」。
+
+系統因此另外蒐集多語言新聞、建立向量資料庫，並用一個 LangChain Agent 把三種資料來源（預測數據、新聞、系統說明）整合起來，讓使用者用一般語言就能查詢，回答時並附上可查證的新聞來源。詳見下方 [AI 問答助手（RAG Agent）](#ai-問答助手rag-agent)。
+
 ---
 
 ## 系統流程
 
+系統有兩條資料流程，最後都匯入同一個 Streamlit 網站。
+
 ```text
-GDELT / V-Dem
-      │
-      ▼
-資料自動化擷取與整理
-      │
-      ▼
-月度雙邊特徵
-      │
-      ▼
-LightGBM
-      │
-      ▼
-三類別機率預測
-      │
-      ▼
-每月自動更新
-      │
-      ▼
-Streamlit Dashboard
+預測流程（每月）                          問答流程（每週）
+─────────────────                        ─────────────────
+GDELT / V-Dem                            Google News RSS（多語言）
+      │                                        │  解析轉址、擷取全文
+      ▼                                        ▼
+資料自動化擷取與整理                        SQLite articles 表
+      │                                        │  multilingual-e5-base
+      ▼                                        ▼
+月度雙邊特徵                               Chroma 向量庫  ◄── docs/about_system.md
+      │                                        │
+      ▼                                        ▼
+LightGBM ─► 三類別機率預測                 LangChain Agent（Groq LLM，三個檢索工具）
+      │                                        │
+      ▼                                        ▼
+SQLite predictions 表                     問答結果（附新聞來源）
+      │                                        │
+      └────────────────┬───────────────────────┘
+                       ▼
+            Streamlit（Dashboard + 聊天分頁）
 ```
 
-GitHub Actions 負責排程資料更新與預測流程，網站則負責呈現最新預測與歷史趨勢。
+GitHub Actions 負責排程：預測流程每月更新一次，新聞抓取與 embedding 每週更新一次；網站則負責呈現最新預測、歷史趨勢與問答介面。
+
+---
 
 ## Model Evaluation
 
@@ -99,6 +114,62 @@ AUC 主要衡量模型把不同類別的樣本排序開來的能力；而 recall
 - 該組關係的歷史變化
 
 ![Detail 頁：機率分布與十年歷史趨勢](assets/detail.png)
+
+---
+
+## AI 問答助手（RAG Agent）
+
+除了模型預測，系統還整合了一個 **LangChain Agent**，讓使用者可以用自然語言直接提問，例如：
+
+- 「中日關係現在的預測機率是多少？」
+- 「最近台海為什麼緊張？」
+- 「這個模型是怎麼訓練的？」
+
+Agent 會依問題性質，自己決定要查哪一種資料來源，而不是把所有東西都塞進同一個 prompt。
+
+### 三個檢索工具
+
+| 工具 | 資料來源 | 適合的問題 |
+|---|---|---|
+| `query_prediction` | SQLite `predictions` 表 | 「現在如何」、「機率多少」這類量化問題 |
+| `query_news` | Chroma 向量庫（新聞全文） | 「為什麼」、「發生了什麼事」這類需要背景的問題 |
+| `query_system_info` | Chroma 向量庫（系統說明文件） | 「這個系統怎麼做的」、「用了什麼技術」 |
+
+### 詳細流程
+
+（上方「系統流程」的問答流程展開後，各檔案實際做的事）
+
+```text
+Google News RSS（繁中／簡中／英／日／韓／越，依關係差異化選語言）
+      │  news_fetch.py：解析轉址取得原文網址 → newspaper3k 擷取全文
+      ▼
+SQLite  articles 表（source_url UNIQUE 去重，embedded 欄位標記狀態）
+      │  rag_embed.py：撈出 embedded = 0 的文章
+      ▼
+multilingual-e5-base embedding
+      │
+      ▼
+Chroma 向量庫（outputs/chroma_db）
+   ├── news_articles  ← 新聞全文，帶 dyad / 標題 / 媒體 / 日期 metadata
+   └── system_info    ← docs/about_system.md 依段落切分（embed_system_info.py）
+      │
+      ▼
+LangChain Agent（LLM：Groq openai/gpt-oss-120b，額度用盡自動 fallback 到 gpt-oss-20b）
+      │  format_sources：掃描回答中的 [新聞N] 標記，自動補上 APA 格式參考來源
+      ▼
+Streamlit 聊天分頁（帶最近數輪對話上下文）
+```
+
+### 幾個設計上的取捨
+
+- **多語言 embedding**：新聞用 `intfloat/multilingual-e5-base` 轉向量，使用者用中文提問也能檢索到日文、韓文報導；同一組關係會刻意同時抓繁中與簡中，補上不同敘事角度。
+- **檢索範圍用 metadata 過濾**：`query_news` 會用 `dyad` 欄位過濾，避免中日的問題檢索到兩韓的新聞。
+- **來源可查證**：回答裡的 `[新聞1]` 等標記會在最後被換成連續編號，並附上媒體、發布日期與原文網址。
+- **系統說明也走 RAG**：關於系統本身的問題不寫死在 prompt 裡，而是從 `docs/about_system.md` 檢索，改文件就能更新 Agent 的回答。
+
+### 自動更新
+
+`.github/workflows/weekly_news_update.yml` 每週排程執行：抓取新聞 → 對新文章做 embedding → 把更新後的 `relations.db` 與 `chroma_db` commit 回 repo。
 
 ---
 
@@ -155,7 +226,7 @@ AUC 主要衡量模型把不同類別的樣本排序開來的能力；而 recall
 
 ---
 
-# Limitations & Future Work
+## Limitations & Future Work
 
 ### 目前只支援 11 組已訓練的雙邊關係
 
@@ -207,6 +278,8 @@ Leave-One-Dyad-Out 驗證顯示，當模型需要預測完全沒看過的新國�
 | Validation | Temporal Split、Leave-One-Dyad-Out |
 | Visualization | Plotly |
 | Dashboard | Streamlit |
+| RAG / Agent | LangChain、Chroma、Groq（gpt-oss-120b / 20b）、HuggingFace Embeddings（multilingual-e5-base）、SQLite |
+| News Ingestion | Google News RSS、feedparser、newspaper3k |
 | Automation | GitHub Actions |
 
 ---
@@ -216,10 +289,23 @@ Leave-One-Dyad-Out 驗證顯示，當模型需要預測完全沒看過的新國�
 ```
 .
 ├── src/
-│   ├── core/                  # shared logic (feature engineering, data fetching)
+│   ├── core/                  # shared logic
+│   │   ├── news_fetch.py       # Google News RSS 抓取與全文擷取
+│   │   ├── dyad_config.py      # 11 組關係的多語言搜尋關鍵字
+│   │   ├── batch_fetch.py      # 批次抓新聞寫入 SQLite
+│   │   ├── news_db_writer.py   # articles 資料表建立與寫入
+│   │   ├── rag_embed.py        # 新文章 → embedding → Chroma
+│   │   ├── agent_tools.py      # 三個 LangChain 檢索工具
+│   │   └── agent_core.py       # Agent 組裝、模型 fallback、來源格式化
 │   ├── training/               # training-stage scripts (batch fetch, init history, retrain)
 │   ├── predict_pipeline.py     # monthly prediction pipeline
-│   └── app.py                  # Streamlit app
+│   └── app.py                  # Streamlit app（含聊天分頁）
+├── scripts/
+│   └── embed_system_info.py    # 把 docs/about_system.md 存入 system_info 向量庫
+├── docs/about_system.md        # 系統說明（同時作為 RAG 的知識來源）
+├── outputs/
+│   ├── relations.db            # SQLite（預測結果、新聞文章）
+│   └── chroma_db/              # Chroma 向量庫（news_articles、system_info）
 ├── notebooks/                  # full analysis process
 └── DEVLOG.md                  # detailed methodology & experiment log
 ```
@@ -228,9 +314,10 @@ Leave-One-Dyad-Out 驗證顯示，當模型需要預測完全沒看過的新國�
 
 ## 本機執行
 
-安裝套件：
+啟用虛擬環境並安裝套件（Windows）：
 
-```bash
+```bat
+.venv\Scripts\activate.bat
 pip install -r requirements.txt
 ```
 
@@ -238,6 +325,24 @@ pip install -r requirements.txt
 
 ```bash
 streamlit run src/app.py
+```
+
+### RAG 相關指令
+
+問答助手需要 `.env` 內設定 `GROQ_API_KEY`（新聞抓取與 embedding 另可設定 `HF_TOKEN`）。
+
+```bash
+# 抓取本週新聞並寫入 SQLite
+python src/core/batch_fetch.py
+
+# 對尚未處理的文章做 embedding，存入 Chroma
+python src/core/rag_embed.py
+
+# 更新系統說明知識庫（改過 docs/about_system.md 後執行）
+python scripts/embed_system_info.py
+
+# 在終端機直接和 Agent 對話測試
+python src/core/agent_core.py
 ```
 
 ---
